@@ -37,12 +37,12 @@ jobs:
         env:
           PYTHONUNBUFFERED: "1"
 
-          SHOPIFY_SHOP: "YOURSTORE.myshopify.com"
+          SHOPIFY_SHOP: "yakirabella.myshopify.com"
           SHOPIFY_ADMIN_TOKEN: ${{ secrets.SHOPIFY_ADMIN_TOKEN }}
           SHOPIFY_API_VERSION: "2025-01"
 
           AIRTABLE_TOKEN: ${{ secrets.AIRTABLE_TOKEN }}
-          AIRTABLE_BASE_ID: "appkLHzB3FCV0ABrG"
+          AIRTABLE_BASE_ID: "app1ytJmwzvLDMHHK"
           AIRTABLE_TABLE_NAME: "Products"
 
           MODE: ${{ github.event.inputs.mode || 'incremental' }}
