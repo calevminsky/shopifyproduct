@@ -1,0 +1,56 @@
+name: Sync Shopify Products to Airtable
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "backfill or incremental"
+        required: true
+        default: "incremental"
+      since_days:
+        description: "Only used for incremental mode"
+        required: true
+        default: "7"
+      skip_archived:
+        description: "Only used for backfill mode"
+        required: true
+        default: "true"
+  schedule:
+    - cron: "30 6 * * *" # daily 6:30 UTC (1:30am ET)
+
+jobs:
+  run-sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Run sync
+        env:
+          PYTHONUNBUFFERED: "1"
+
+          SHOPIFY_SHOP: "YOURSTORE.myshopify.com"
+          SHOPIFY_ADMIN_TOKEN: ${{ secrets.SHOPIFY_ADMIN_TOKEN }}
+          SHOPIFY_API_VERSION: "2025-01"
+
+          AIRTABLE_TOKEN: ${{ secrets.AIRTABLE_TOKEN }}
+          AIRTABLE_BASE_ID: "appkLHzB3FCV0ABrG"
+          AIRTABLE_TABLE_NAME: "Products"
+
+          MODE: ${{ github.event.inputs.mode || 'incremental' }}
+          SINCE_DAYS: ${{ github.event.inputs.since_days || '7' }}
+          SKIP_ARCHIVED: ${{ github.event.inputs.skip_archived || 'true' }}
+
+          MAX_PRODUCTS: "200000"
+          SLEEP_SECONDS: "0.03"
+
+        run: |
+          python -u sync_shopify_products.py
