@@ -1,0 +1,43 @@
+name: Sync Influencer Attribution to Airtable
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "15 7 * * *" # daily 7:15 UTC (2:15am ET)
+
+jobs:
+  run-attribution:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Run influencer attribution sync
+        env:
+          PYTHONUNBUFFERED: "1"
+
+          SHOPIFY_SHOP: "yakirabella.myshopify.com"
+          SHOPIFY_ADMIN_TOKEN: ${{ secrets.SHOPIFY_ADMIN_TOKEN }}
+          SHOPIFY_API_VERSION: "2025-01"
+
+          AIRTABLE_TOKEN: ${{ secrets.AIRTABLE_TOKEN }}
+
+          # IMPORTANT: this is the MARKETING base ID (different from your Products base)
+          AIRTABLE_BASE_ID: ${{ secrets.AIRTABLE_MARKETING_BASE_ID }}
+
+          AIRTABLE_TABLE_NAME: "Influencer Schedule"
+
+          LOOKBACK_DAYS: "5"
+          SALES_MODE: "subtotal"   # or "total"
+          SLEEP_SECONDS: "0.05"
+
+        run: |
+          python -u sync_influencer_attribution.py
