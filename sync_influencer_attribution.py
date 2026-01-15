@@ -27,7 +27,7 @@ AIRTABLE_TABLE_NAME = os.getenv("AIRTABLE_TABLE_NAME", "Influencer Schedule").st
 LOOKBACK_DAYS = int(os.getenv("LOOKBACK_DAYS", "5"))
 SLEEP_SECONDS = float(os.getenv("SLEEP_SECONDS", "0.05"))
 MAX_ORDERS_PAGES = int(os.getenv("MAX_ORDERS_PAGES", "200"))
-SALES_MODE = os.getenv("SALES_MODE", "subtotal").strip().lower()  # "subtotal" or "total"
+SALES_MODE = os.getenv("SALES_MODE", "total").strip().lower()  # "subtotal" or "total"
 
 ET_TZ = "America/New_York"
 
@@ -217,7 +217,7 @@ def order_codes(order_node: Dict[str, Any]) -> List[str]:
 
 
 def order_amount(order_node: Dict[str, Any]) -> float:
-    key = "currentSubtotalPriceSet" if SALES_MODE == "subtotal" else "totalPriceSet"
+    key = "currentSubtotalPriceSet" if SALES_MODE == "total" else "totalPriceSet"
     m = (((order_node.get(key) or {}).get("shopMoney")) or {})
     try:
         return float(m.get("amount"))
