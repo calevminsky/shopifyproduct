@@ -277,7 +277,7 @@ def main() -> None:
         page_size=100
     )
 
-    print(f"Found {len(recs)} records since {cutoff.isoformat()} (ET).", flush=True)
+    print(f"Found {len(recs)} records (ET).", flush=True)
 
     for i, rec in enumerate(recs, start=1):
         rid = rec["id"]
