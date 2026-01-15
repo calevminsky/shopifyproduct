@@ -175,14 +175,44 @@ def norm(s: str) -> str:
 
 
 import re
+from typing import Any, List, Dict
 
 def order_codes(order_node: Dict[str, Any]) -> List[str]:
-    raw = order_node.get("discountCodes") or ""
+    raw = order_node.get("discountCodes")
+
     if not raw:
         return []
-    # split on commas and whitespace
-    parts = re.split(r"[,\s]+", raw.strip())
-    return [norm(p) for p in parts if p.strip()]
+
+    # If Shopify returns a list, normalize each item
+    if isinstance(raw, list):
+        out = []
+        for item in raw:
+            if item is None:
+                continue
+            # sometimes list items can be strings; handle that
+            if isinstance(item, str):
+                # could still contain commas/spaces
+                parts = re.split(r"[,\s]+", item.strip())
+                out.extend([norm(p) for p in parts if p.strip()])
+            else:
+                # unexpected type; ignore safely
+                continue
+        # de-dupe while preserving order
+        seen = set()
+        deduped = []
+        for c in out:
+            if c not in seen:
+                seen.add(c)
+                deduped.append(c)
+        return deduped
+
+    # If Shopify returns a string, split it
+    if isinstance(raw, str):
+        parts = re.split(r"[,\s]+", raw.strip())
+        return [norm(p) for p in parts if p.strip()]
+
+    # Any other type: be safe
+    return []
 
 
 
