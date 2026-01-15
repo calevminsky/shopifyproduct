@@ -203,15 +203,22 @@ def main() -> None:
     today_et = datetime.now(ZoneInfo(ET_TZ)).date()
     cutoff = today_et - timedelta(days=LOOKBACK_DAYS)
 
-    # Pull influencer rows from the last LOOKBACK_DAYS (by Date) that have a code
-cutoff_minus_1 = (cutoff - timedelta(days=1)).isoformat()
-formula = (
-    f"AND("
-    f"{{{F['post_date']}}}!=BLANK(),"
-    f"{{{F['code']}}}!=BLANK(),"
-    f"IS_AFTER({{{F['post_date']}}}, '{cutoff_minus_1}')"
-    f")"
-)
+    cutoff_minus_1 = (cutoff - timedelta(days=1)).isoformat()
+
+    formula = (
+        f"AND("
+        f"{{{F['post_date']}}}!=BLANK(),"
+        f"{{{F['code']}}}!=BLANK(),"
+        f"IS_AFTER({{{F['post_date']}}}, '{cutoff_minus_1}')"
+        f")"
+    )
+
+    recs = a_list_records(
+        filter_formula=formula,
+        fields=[F["post_date"], F["code"]],
+        page_size=100
+    )
+
 
 
     recs = a_list_records(filter_formula=formula, fields=[F["post_date"], F["code"]], page_size=100)
