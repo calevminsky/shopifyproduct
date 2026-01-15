@@ -2,6 +2,25 @@ name: Sync Influencer Attribution to Airtable
 
 on:
   workflow_dispatch:
+    inputs:
+      mode:
+        description: "incremental or backfill"
+        required: true
+        default: "incremental"
+      backfill_start:
+        description: "Backfill start date (YYYY-MM-DD) - only used if mode=backfill"
+        required: false
+      backfill_end:
+        description: "Backfill end date (YYYY-MM-DD) - only used if mode=backfill"
+        required: false
+      lookback_days:
+        description: "Only used if mode=incremental"
+        required: true
+        default: "5"
+      sales_mode:
+        description: "subtotal or total"
+        required: true
+        default: "total"
   schedule:
     - cron: "15 7 * * *" # daily 7:15 UTC (2:15am ET)
 
@@ -29,14 +48,17 @@ jobs:
           SHOPIFY_API_VERSION: "2025-01"
 
           AIRTABLE_TOKEN: ${{ secrets.AIRTABLE_TOKEN }}
-
-          # IMPORTANT: this is the MARKETING base ID (different from your Products base)
           AIRTABLE_BASE_ID: ${{ secrets.AIRTABLE_MARKETING_BASE_ID }}
-
           AIRTABLE_TABLE_NAME: "Influencer Schedule"
 
-          LOOKBACK_DAYS: "5"
-          SALES_MODE: "subtotal"   # or "total"
+          # --- New knobs ---
+          MODE: ${{ github.event.inputs.mode || 'incremental' }}
+          BACKFILL_START: ${{ github.event.inputs.backfill_start || '' }}
+          BACKFILL_END: ${{ github.event.inputs.backfill_end || '' }}
+
+          LOOKBACK_DAYS: ${{ github.event.inputs.lookback_days || '5' }}
+          SALES_MODE: ${{ github.event.inputs.sales_mode || 'total' }}
+
           SLEEP_SECONDS: "0.05"
 
         run: |
