@@ -232,18 +232,44 @@ def main() -> None:
     if not (SHOPIFY_SHOP and SHOPIFY_ADMIN_TOKEN and AIRTABLE_TOKEN and AIRTABLE_BASE_ID):
         die("Missing required env vars.")
 
+    MODE = os.getenv("MODE", "incremental").strip().lower()
+    BACKFILL_START = os.getenv("BACKFILL_START", "").strip()
+    BACKFILL_END = os.getenv("BACKFILL_END", "").strip()
+
     today_et = datetime.now(ZoneInfo(ET_TZ)).date()
-    cutoff = today_et - timedelta(days=LOOKBACK_DAYS)
 
-    cutoff_minus_1 = (cutoff - timedelta(days=1)).isoformat()
+    if MODE == "backfill":
+        if not BACKFILL_START or not BACKFILL_END:
+            die("Backfill mode requires BACKFILL_START and BACKFILL_END (YYYY-MM-DD).")
 
-    formula = (
-        f"AND("
-        f"{{{F['post_date']}}}!=BLANK(),"
-        f"{{{F['code']}}}!=BLANK(),"
-        f"IS_AFTER({{{F['post_date']}}}, '{cutoff_minus_1}')"
-        f")"
-    )
+        start_d = datetime.strptime(BACKFILL_START, "%Y-%m-%d").date()
+        end_d = datetime.strptime(BACKFILL_END, "%Y-%m-%d").date()
+
+        formula = (
+            f"AND("
+            f"{{{F['post_date']}}}!=BLANK(),"
+            f"{{{F['code']}}}!=BLANK(),"
+            f"IS_AFTER({{{F['post_date']}}}, '{(start_d - timedelta(days=1)).isoformat()}'),"
+            f"IS_BEFORE({{{F['post_date']}}}, '{(end_d + timedelta(days=1)).isoformat()}')"
+            f")"
+        )
+
+        print(f"[backfill] range {start_d}..{end_d} (ET)", flush=True)
+
+    else:
+        cutoff = today_et - timedelta(days=LOOKBACK_DAYS)
+        cutoff_minus_1 = (cutoff - timedelta(days=1)).isoformat()
+
+        formula = (
+            f"AND("
+            f"{{{F['post_date']}}}!=BLANK(),"
+            f"{{{F['code']}}}!=BLANK(),"
+            f"IS_AFTER({{{F['post_date']}}}, '{cutoff_minus_1}')"
+            f")"
+        )
+
+        print(f"[incremental] since {cutoff} (ET)", flush=True)
+
    
     recs = a_list_records(
         filter_formula=formula,
