@@ -1,15 +1,16 @@
 # sync_influencer_attribution.py
+
 import os
 import sys
 import json
 import time
+import re
 from datetime import datetime, timezone, timedelta, date
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Set
 
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-
 from zoneinfo import ZoneInfo  # Python 3.11 OK on GitHub Actions
 
 
@@ -24,20 +25,41 @@ AIRTABLE_TOKEN = os.getenv("AIRTABLE_TOKEN", "").strip()
 AIRTABLE_BASE_ID = os.getenv("AIRTABLE_BASE_ID", "").strip()
 AIRTABLE_TABLE_NAME = os.getenv("AIRTABLE_TABLE_NAME", "Influencer Schedule").strip()
 
+# Linked products setup (in same base)
+AIRTABLE_PRODUCTS_TABLE_NAME = os.getenv("AIRTABLE_PRODUCTS_TABLE_NAME", "Products").strip()
+PRODUCT_GID_FIELD = os.getenv("PRODUCT_GID_FIELD", "Shopify Product GID").strip()
+
 LOOKBACK_DAYS = int(os.getenv("LOOKBACK_DAYS", "5"))
 SLEEP_SECONDS = float(os.getenv("SLEEP_SECONDS", "0.05"))
 MAX_ORDERS_PAGES = int(os.getenv("MAX_ORDERS_PAGES", "200"))
-SALES_MODE = os.getenv("SALES_MODE", "total").strip().lower()  # "subtotal" or "total"
+
+# subtotal or total
+SALES_MODE = os.getenv("SALES_MODE", "subtotal").strip().lower()  # "subtotal" or "total"
 
 ET_TZ = "America/New_York"
 
-# Airtable field names (MATCHING YOUR SCREENSHOTS)
+
+# ----------------------------
+# Airtable field names (MATCH YOUR BASE)
+# ----------------------------
 F = {
+    # Inputs
     "post_date": "Date",
     "code": "Code",
+    "products_link": "Products",  # linked to Products table
+
+    # Existing outputs
     "sales_out": "Sales",
     "orders_out": "Orders",
-    "last_synced_at": "Last Synced At",  # optional; add this field if you want
+
+    # New outputs (YOU WILL CREATE THESE 4 NUMBER FIELDS IN AIRTABLE)
+    "all_units_sold": "All Units Sold",
+    "promoted_units_sold": "Promoted Units Sold",
+    "all_units_sold_with_code": "All Units Sold With Code",
+    "promoted_units_sold_with_code": "Promoted Units Sold With Code",
+
+    # Optional (only if you add this field; otherwise set to "" or remove)
+    "last_synced_at": "Last Synced At",
 }
 
 
@@ -102,7 +124,12 @@ def shopify_graphql(query: str, variables: Dict[str, Any]) -> Dict[str, Any]:
     return data
 
 
-def a_list_records(filter_formula: str, fields: Optional[List[str]] = None, page_size: int = 100) -> List[Dict[str, Any]]:
+def a_list_records(
+    table_name: str,
+    filter_formula: str,
+    fields: Optional[List[str]] = None,
+    page_size: int = 100
+) -> List[Dict[str, Any]]:
     params: Dict[str, Any] = {"filterByFormula": filter_formula, "pageSize": page_size}
     if fields:
         for i, f in enumerate(fields):
@@ -113,7 +140,7 @@ def a_list_records(filter_formula: str, fields: Optional[List[str]] = None, page
     while True:
         if offset:
             params["offset"] = offset
-        r = S.get(airtable_url(AIRTABLE_TABLE_NAME), headers=airtable_headers(), params=params, timeout=60)
+        r = S.get(airtable_url(table_name), headers=airtable_headers(), params=params, timeout=60)
         r.raise_for_status()
         data = r.json()
         out.extend(data.get("records", []))
@@ -123,9 +150,9 @@ def a_list_records(filter_formula: str, fields: Optional[List[str]] = None, page
     return out
 
 
-def aupdate(record_id: str, fields: Dict[str, Any]) -> None:
+def aupdate(table_name: str, record_id: str, fields: Dict[str, Any]) -> None:
     r = S.patch(
-        airtable_url(f"{AIRTABLE_TABLE_NAME}/{record_id}"),
+        airtable_url(f"{table_name}/{record_id}"),
         headers=airtable_headers(),
         data=json.dumps({"fields": fields}),
         timeout=60,
@@ -137,7 +164,6 @@ def parse_airtable_date(v: Any) -> Optional[date]:
     if not v:
         return None
     if isinstance(v, str):
-        # Airtable Date field usually returns YYYY-MM-DD
         try:
             return datetime.strptime(v, "%Y-%m-%d").date()
         except Exception:
@@ -151,6 +177,57 @@ def et_midnight_to_utc(d: date) -> datetime:
     return local.astimezone(timezone.utc)
 
 
+def norm(s: str) -> str:
+    return (s or "").strip().upper()
+
+
+def order_codes(order_node: Dict[str, Any]) -> List[str]:
+    """
+    Shopify 'discountCodes' can come back as:
+    - string "TEST10"
+    - list ["TEST10"]
+    - list of strings with commas
+    """
+    raw = order_node.get("discountCodes")
+    if not raw:
+        return []
+
+    if isinstance(raw, list):
+        out: List[str] = []
+        for item in raw:
+            if item is None:
+                continue
+            if isinstance(item, str):
+                parts = re.split(r"[,\s]+", item.strip())
+                out.extend([norm(p) for p in parts if p.strip()])
+        # de-dupe
+        seen = set()
+        deduped = []
+        for c in out:
+            if c not in seen:
+                seen.add(c)
+                deduped.append(c)
+        return deduped
+
+    if isinstance(raw, str):
+        parts = re.split(r"[,\s]+", raw.strip())
+        return [norm(p) for p in parts if p.strip()]
+
+    return []
+
+
+def order_amount(order_node: Dict[str, Any]) -> float:
+    key = "currentSubtotalPriceSet" if SALES_MODE == "subtotal" else "totalPriceSet"
+    m = (((order_node.get(key) or {}).get("shopMoney")) or {})
+    try:
+        return float(m.get("amount"))
+    except Exception:
+        return 0.0
+
+
+# ----------------------------
+# Shopify query: orders + line items
+# ----------------------------
 QUERY_ORDERS = """
 query Orders($first: Int!, $after: String, $query: String!) {
   orders(first: $first, after: $after, query: $query, sortKey: CREATED_AT, reverse: false) {
@@ -163,6 +240,14 @@ query Orders($first: Int!, $after: String, $query: String!) {
         discountCodes
         currentSubtotalPriceSet { shopMoney { amount currencyCode } }
         totalPriceSet { shopMoney { amount currencyCode } }
+        lineItems(first: 250) {
+          edges {
+            node {
+              quantity
+              product { id }
+            }
+          }
+        }
       }
     }
   }
@@ -170,59 +255,38 @@ query Orders($first: Int!, $after: String, $query: String!) {
 """
 
 
-def norm(s: str) -> str:
-    return (s or "").strip().upper()
+def get_selected_product_gids(linked_record_ids: List[str]) -> Set[str]:
+    """
+    linked_record_ids are Airtable record IDs from Influencer Schedule -> Products linked field.
+    We look those up in the Products table to get Shopify Product GIDs.
+    """
+    if not linked_record_ids:
+        return set()
 
+    gids: Set[str] = set()
+    chunk_size = 50  # keep formula length reasonable
 
-import re
-from typing import Any, List, Dict
+    for i in range(0, len(linked_record_ids), chunk_size):
+        chunk = linked_record_ids[i:i + chunk_size]
+        ors = ",".join([f"RECORD_ID()='{rid}'" for rid in chunk])
+        filter_formula = f"OR({ors})"
 
-def order_codes(order_node: Dict[str, Any]) -> List[str]:
-    raw = order_node.get("discountCodes")
+        recs = a_list_records(
+            table_name=AIRTABLE_PRODUCTS_TABLE_NAME,
+            filter_formula=filter_formula,
+            fields=[PRODUCT_GID_FIELD],
+            page_size=100
+        )
 
-    if not raw:
-        return []
+        for r in recs:
+            flds = r.get("fields") or {}
+            gid = flds.get(PRODUCT_GID_FIELD)
+            if isinstance(gid, str) and gid.strip():
+                gids.add(gid.strip())
 
-    # If Shopify returns a list, normalize each item
-    if isinstance(raw, list):
-        out = []
-        for item in raw:
-            if item is None:
-                continue
-            # sometimes list items can be strings; handle that
-            if isinstance(item, str):
-                # could still contain commas/spaces
-                parts = re.split(r"[,\s]+", item.strip())
-                out.extend([norm(p) for p in parts if p.strip()])
-            else:
-                # unexpected type; ignore safely
-                continue
-        # de-dupe while preserving order
-        seen = set()
-        deduped = []
-        for c in out:
-            if c not in seen:
-                seen.add(c)
-                deduped.append(c)
-        return deduped
+        time.sleep(SLEEP_SECONDS)
 
-    # If Shopify returns a string, split it
-    if isinstance(raw, str):
-        parts = re.split(r"[,\s]+", raw.strip())
-        return [norm(p) for p in parts if p.strip()]
-
-    # Any other type: be safe
-    return []
-
-
-
-def order_amount(order_node: Dict[str, Any]) -> float:
-    key = "currentSubtotalPriceSet" if SALES_MODE == "total" else "totalPriceSet"
-    m = (((order_node.get(key) or {}).get("shopMoney")) or {})
-    try:
-        return float(m.get("amount"))
-    except Exception:
-        return 0.0
+    return gids
 
 
 def main() -> None:
@@ -241,7 +305,6 @@ def main() -> None:
     if MODE == "backfill":
         if not BACKFILL_START or not BACKFILL_END:
             die("Backfill mode requires BACKFILL_START and BACKFILL_END (YYYY-MM-DD).")
-
         start_d = datetime.strptime(BACKFILL_START, "%Y-%m-%d").date()
         end_d = datetime.strptime(BACKFILL_END, "%Y-%m-%d").date()
 
@@ -253,13 +316,10 @@ def main() -> None:
             f"IS_BEFORE({{{F['post_date']}}}, '{(end_d + timedelta(days=1)).isoformat()}')"
             f")"
         )
-
         print(f"[backfill] range {start_d}..{end_d} (ET)", flush=True)
-
     else:
         cutoff = today_et - timedelta(days=LOOKBACK_DAYS)
         cutoff_minus_1 = (cutoff - timedelta(days=1)).isoformat()
-
         formula = (
             f"AND("
             f"{{{F['post_date']}}}!=BLANK(),"
@@ -267,13 +327,13 @@ def main() -> None:
             f"IS_AFTER({{{F['post_date']}}}, '{cutoff_minus_1}')"
             f")"
         )
-
         print(f"[incremental] since {cutoff} (ET)", flush=True)
 
-   
+    # Pull influencer schedule records (include linked Products field)
     recs = a_list_records(
+        table_name=AIRTABLE_TABLE_NAME,
         filter_formula=formula,
-        fields=[F["post_date"], F["code"]],
+        fields=[F["post_date"], F["code"], F["products_link"]],
         page_size=100
     )
 
@@ -289,8 +349,14 @@ def main() -> None:
         if not d0 or not code:
             continue
 
-        # Your rule: orders on D0 and D1 (ET calendar days)
-        # So fetch created_at in [D0 00:00 ET, D2 00:00 ET)
+        # Linked products are record IDs
+        linked_products = af.get(F["products_link"]) or []
+        if not isinstance(linked_products, list):
+            linked_products = []
+
+        selected_gids = get_selected_product_gids(linked_products) if linked_products else set()
+
+        # 2-day window: D0 and D1 (ET)
         start_utc = et_midnight_to_utc(d0)
         end_utc = et_midnight_to_utc(d0 + timedelta(days=2))
 
@@ -298,8 +364,16 @@ def main() -> None:
 
         after = None
         pages = 0
-        orders = 0
-        sales = 0.0
+
+        # Existing metrics (WITH CODE)
+        orders_with_code = 0
+        sales_with_code = 0.0
+
+        # New unit metrics
+        all_units_sold = 0
+        promoted_units_sold = 0
+        all_units_sold_with_code = 0
+        promoted_units_sold_with_code = 0
 
         while True:
             pages += 1
@@ -316,9 +390,31 @@ def main() -> None:
                 o = edge["node"]
                 if o.get("cancelledAt"):
                     continue
+
+                # Sum units for ALL orders in the window
+                line_edges = (((o.get("lineItems") or {}).get("edges")) or [])
+                order_units_all = 0
+                order_units_promoted = 0
+
+                for le in line_edges:
+                    li = le.get("node") or {}
+                    qty = int(li.get("quantity") or 0)
+                    order_units_all += qty
+
+                    pid = ((li.get("product") or {}).get("id") or "")
+                    if pid and pid in selected_gids:
+                        order_units_promoted += qty
+
+                all_units_sold += order_units_all
+                promoted_units_sold += order_units_promoted
+
+                # If order used influencer code, also count "with code" metrics
                 if code in order_codes(o):
-                    orders += 1
-                    sales += order_amount(o)
+                    orders_with_code += 1
+                    sales_with_code += order_amount(o)
+
+                    all_units_sold_with_code += order_units_all
+                    promoted_units_sold_with_code += order_units_promoted
 
             if not pi["hasNextPage"]:
                 break
@@ -328,16 +424,31 @@ def main() -> None:
             time.sleep(SLEEP_SECONDS)
 
         update = {
-            F["orders_out"]: orders,
-            F["sales_out"]: round(sales, 2),
+            # existing
+            F["orders_out"]: orders_with_code,
+            F["sales_out"]: round(sales_with_code, 2),
+
+            # new unit metrics
+            F["all_units_sold"]: all_units_sold,
+            F["promoted_units_sold"]: promoted_units_sold,
+            F["all_units_sold_with_code"]: all_units_sold_with_code,
+            F["promoted_units_sold_with_code"]: promoted_units_sold_with_code,
         }
 
         # Optional (only if you add this field in Airtable)
         if F.get("last_synced_at"):
             update[F["last_synced_at"]] = datetime.now(timezone.utc).isoformat()
 
-        aupdate(rid, update)
-        print(f"[{i}/{len(recs)}] {d0} code={code} orders={orders} sales={sales:.2f}", flush=True)
+        aupdate(AIRTABLE_TABLE_NAME, rid, update)
+
+        print(
+            f"[{i}/{len(recs)}] {d0} code={code} "
+            f"orders_with_code={orders_with_code} sales_with_code={sales_with_code:.2f} "
+            f"all_units={all_units_sold} promoted_units={promoted_units_sold} "
+            f"all_units_code={all_units_sold_with_code} promoted_units_code={promoted_units_sold_with_code}",
+            flush=True
+        )
+
         time.sleep(SLEEP_SECONDS)
 
     print("Done.", flush=True)
