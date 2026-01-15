@@ -160,7 +160,7 @@ query Orders($first: Int!, $after: String, $query: String!) {
         id
         createdAt
         cancelledAt
-        discountCodes { code }
+        discountCodes
         currentSubtotalPriceSet { shopMoney { amount currencyCode } }
         totalPriceSet { shopMoney { amount currencyCode } }
       }
@@ -174,14 +174,16 @@ def norm(s: str) -> str:
     return (s or "").strip().upper()
 
 
+import re
+
 def order_codes(order_node: Dict[str, Any]) -> List[str]:
-    codes = order_node.get("discountCodes") or []
-    out = []
-    for c in codes:
-        code = (c or {}).get("code")
-        if code:
-            out.append(norm(code))
-    return out
+    raw = order_node.get("discountCodes") or ""
+    if not raw:
+        return []
+    # split on commas and whitespace
+    parts = re.split(r"[,\s]+", raw.strip())
+    return [norm(p) for p in parts if p.strip()]
+
 
 
 def order_amount(order_node: Dict[str, Any]) -> float:
@@ -212,16 +214,13 @@ def main() -> None:
         f"IS_AFTER({{{F['post_date']}}}, '{cutoff_minus_1}')"
         f")"
     )
-
+   
     recs = a_list_records(
         filter_formula=formula,
         fields=[F["post_date"], F["code"]],
         page_size=100
     )
 
-
-
-    recs = a_list_records(filter_formula=formula, fields=[F["post_date"], F["code"]], page_size=100)
     print(f"Found {len(recs)} records since {cutoff.isoformat()} (ET).", flush=True)
 
     for i, rec in enumerate(recs, start=1):
