@@ -116,7 +116,19 @@ def airtable_url(path: str) -> str:
 
 def shopify_graphql(query: str, variables: Dict[str, Any]) -> Dict[str, Any]:
     payload = {"query": query, "variables": variables}
-    r = S.post(shopify_graphql_url(), headers=shopify_headers(), data=json.dumps(payload), timeout=90)
+    url = shopify_graphql_url()
+    r = S.post(url, headers=shopify_headers(), data=json.dumps(payload), timeout=90)
+    if r.status_code == 401:
+        die(
+            f"Shopify API returned 401 Unauthorized for {url}. "
+            "Check that SHOPIFY_ADMIN_TOKEN is valid, not expired, "
+            "and has the required access scopes (read_orders)."
+        )
+    if r.status_code == 403:
+        die(
+            f"Shopify API returned 403 Forbidden for {url}. "
+            "The token may lack the required access scopes (read_orders)."
+        )
     r.raise_for_status()
     data = r.json()
     if "errors" in data:
