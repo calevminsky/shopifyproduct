@@ -45,7 +45,7 @@ jobs:
 
           SHOPIFY_SHOP: "yakirabella.myshopify.com"
           SHOPIFY_ADMIN_TOKEN: ${{ secrets.SHOPIFY_ADMIN_TOKEN }}
-          SHOPIFY_API_VERSION: "2025-01"
+          SHOPIFY_API_VERSION: "2026-01"
 
           AIRTABLE_TOKEN: ${{ secrets.AIRTABLE_TOKEN }}
           AIRTABLE_BASE_ID: ${{ secrets.AIRTABLE_MARKETING_BASE_ID }}
