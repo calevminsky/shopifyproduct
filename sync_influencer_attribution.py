@@ -19,7 +19,7 @@ from zoneinfo import ZoneInfo  # Python 3.11 OK on GitHub Actions
 # ----------------------------
 SHOPIFY_SHOP = os.getenv("SHOPIFY_SHOP", "").strip()
 SHOPIFY_ADMIN_TOKEN = os.getenv("SHOPIFY_ADMIN_TOKEN", "").strip()
-SHOPIFY_API_VERSION = os.getenv("SHOPIFY_API_VERSION", "2025-01").strip()
+SHOPIFY_API_VERSION = os.getenv("SHOPIFY_API_VERSION", "2026-01").strip()
 
 AIRTABLE_TOKEN = os.getenv("AIRTABLE_TOKEN", "").strip()
 AIRTABLE_BASE_ID = os.getenv("AIRTABLE_BASE_ID", "").strip()
